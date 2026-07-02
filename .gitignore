@@ -1,0 +1,27 @@
+# Local audio outputs and configurations
+*.wav
+*.ogg
+*.mp3
+
+# Project specific caches and audio snippets
+*_temp.wav
+*_ch*.ogg
+
+# Python environment and system caches
+__pycache__/
+*.pyc
+.env
+.venv/
+env/
+
+# Large model files (if you made a local copy)
+local_model/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+# ... your other ignored files ...
+
+# Private scripts and tokens
+test_token.py
+login_hf.py
