@@ -1,0 +1,7 @@
+PyPDF2==3.0.1
+scipy
+soundfile
+numpy
+transformers
+torch
+pocket-tts

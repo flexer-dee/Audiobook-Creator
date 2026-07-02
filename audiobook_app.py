@@ -1,7 +1,11 @@
+import os
+# Force Hugging Face libraries to operate completely offline
+os.environ["HF_HUB_OFFLINE"] = "1"
+
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
-import os
+import re
 import PyPDF2
 import scipy.io.wavfile
 import soundfile as sf
@@ -9,8 +13,6 @@ from pocket_tts import TTSModel
 import numpy as np
 from scipy.signal import butter, lfilter
 import tempfile
-from huggingface_hub import login
-import re
 
 class LocalVoiceCloneApp:
     def __init__(self, root):
@@ -25,29 +27,38 @@ class LocalVoiceCloneApp:
         
         self.model = None
         self.setup_ui()
+        
+        # Start model loading in the background
         threading.Thread(target=self.load_model, daemon=True).start()
 
     def load_model(self):
         try:
-            # The library automatically looks up the local token saved by uvx
-            self.model = TTSModel.load_model()
+            # Load strictly from the downloaded local folder
+            self.model = TTSModel.load_model(model_path="./local_model")
             
-            self.root.after(0, lambda: self.status_label.config(text="Status: Ready (Model Loaded)"))
+            self.root.after(0, lambda: self.status_label.config(text="Status: Ready (100% Offline Mode)"))
             self.root.after(0, lambda: self.convert_btn.config(state="normal"))
         except Exception as e:
             error_text = str(e)
             self.root.after(0, lambda msg=error_text: messagebox.showerror("Load Error", f"Model Load Failed: {msg}"))
+
     def clean_audio(self, input_file_path):
+        """Applies a high-pass filter to clean up the base voice sample."""
         sample_rate, data = scipy.io.wavfile.read(input_file_path)
         audio_float = data.astype(np.float32) / 32768.0
-        if len(audio_float.shape) > 1: audio_float = np.mean(audio_float, axis=1)
+        
+        if len(audio_float.shape) > 1: 
+            audio_float = np.mean(audio_float, axis=1)
+            
         b, a = butter(4, 85.0 / (0.5 * sample_rate), btype='high', analog=False)
         filtered = lfilter(b, a, audio_float)
+        
         temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
         scipy.io.wavfile.write(temp_file.name, sample_rate, (np.clip(filtered * 32767.0, -32768.0, 32767.0)).astype(np.int16))
         return temp_file.name
 
     def split_into_chunks(self, text, max_words=18):
+        """Breaks text into small pieces to safely fit the AI's 50-token processing limit."""
         sentences = re.split(r'(?<=[.!?]) +', text)
         chunks = []
         for sentence in sentences:
@@ -58,20 +69,28 @@ class LocalVoiceCloneApp:
             if words:
                 chunks.append(" ".join(words))
         return [c.strip() for c in chunks if c.strip()]
+
     def setup_ui(self):
+        """Initializes the Tkinter graphical interface."""
         frame = ttk.LabelFrame(self.root, text="Configuration")
         frame.pack(fill="x", padx=10, pady=10)
-        ttk.Button(frame, text="Select PDF", command=lambda: self.select_file(self.pdf_path, [("PDF", "*.pdf")])).grid(row=0, column=0)
-        ttk.Label(frame, textvariable=self.pdf_path).grid(row=0, column=1)
-        ttk.Button(frame, text="Select Voice", command=lambda: self.select_file(self.voice_sample_path, [("WAV", "*.wav")])).grid(row=1, column=0)
-        ttk.Label(frame, textvariable=self.voice_sample_path).grid(row=1, column=1)
-        ttk.Button(frame, text="Save As Base", command=self.select_audio_save).grid(row=2, column=0)
-        ttk.Label(frame, textvariable=self.audio_path).grid(row=2, column=1)
-        ttk.Label(frame, text="Pages per Chapter:").grid(row=3, column=0)
-        ttk.Entry(frame, textvariable=self.pages_per_chapter).grid(row=3, column=1)
+        
+        ttk.Button(frame, text="Select PDF", command=lambda: self.select_file(self.pdf_path, [("PDF", "*.pdf")])).grid(row=0, column=0, pady=5, padx=5)
+        ttk.Label(frame, textvariable=self.pdf_path).grid(row=0, column=1, sticky="w")
+        
+        ttk.Button(frame, text="Select Voice", command=lambda: self.select_file(self.voice_sample_path, [("WAV", "*.wav")])).grid(row=1, column=0, pady=5, padx=5)
+        ttk.Label(frame, textvariable=self.voice_sample_path).grid(row=1, column=1, sticky="w")
+        
+        ttk.Button(frame, text="Save As Base", command=self.select_audio_save).grid(row=2, column=0, pady=5, padx=5)
+        ttk.Label(frame, textvariable=self.audio_path).grid(row=2, column=1, sticky="w")
+        
+        ttk.Label(frame, text="Pages per Chapter:").grid(row=3, column=0, pady=5, padx=5)
+        ttk.Entry(frame, textvariable=self.pages_per_chapter, width=5).grid(row=3, column=1, sticky="w")
+        
         self.convert_btn = ttk.Button(self.root, text="Generate Audiobook", command=self.start_conversion, state="disabled")
         self.convert_btn.pack(pady=20)
-        self.status_label = ttk.Label(self.root, text="Status: Loading model...")
+        
+        self.status_label = ttk.Label(self.root, text="Status: Loading local model weights...")
         self.status_label.pack()
 
     def select_file(self, var, types):
@@ -87,10 +106,13 @@ class LocalVoiceCloneApp:
         threading.Thread(target=self.process_audiobook, daemon=True).start()
 
     def process_audiobook(self):
+        """Handles the core logic of reading the PDF, chunking text, generating audio, and saving to disk."""
         temp_path = None
         try:
             reader = PyPDF2.PdfReader(self.pdf_path.get())
             ppc = int(self.pages_per_chapter.get())
+            
+            # Prepare the cloned voice profile
             temp_path = self.clean_audio(self.voice_sample_path.get())
             voice_state = self.model.get_state_for_audio_prompt(temp_path)
             
@@ -102,37 +124,39 @@ class LocalVoiceCloneApp:
                 text_chunks = self.split_into_chunks(raw_text)
                 audio_pieces = []
                 
-                self.root.after(0, lambda current=i: self.status_label.config(text=f"Status: Generating Chapter {current//ppc + 1}..."))
+                self.root.after(0, lambda current=i: self.status_label.config(text=f"Status: Generating Chapter {current//ppc + 1} of {(len(reader.pages)//ppc) + 1}..."))
                 
-                # 3. Generate audio for each chunk
+                # 3. Generate audio sequentially
                 for chunk in text_chunks:
                     if not chunk: continue
                     audio_tensor = self.model.generate_audio(voice_state, chunk)
-                    # Flatten the array so it stitches together cleanly
+                    # Flatten array to stitch cleanly
                     audio_pieces.append(audio_tensor.numpy().flatten())
                 
                 if not audio_pieces:
                     continue
                     
-                # 4. Glue all the audio pieces together
+                # 4. Glue pieces together and export
                 final_audio = np.concatenate(audio_pieces)
                 
-                # Filename logic
                 base = os.path.splitext(self.audio_path.get())[0]
                 wav_temp = f"{base}_temp.wav"
                 ogg_final = f"{base}_ch{(i//ppc)+1}.ogg"
                 
-                # Write to disk
                 scipy.io.wavfile.write(wav_temp, self.model.sample_rate, final_audio)
                 data, sr = sf.read(wav_temp)
                 sf.write(ogg_final, data, sr, format='OGG', subtype='VORBIS')
+                
                 os.remove(wav_temp)
                 
             os.remove(temp_path)
-            self.root.after(0, lambda: messagebox.showinfo("Done", "Audiobook chapters created!"))
+            self.root.after(0, lambda: messagebox.showinfo("Done", "Audiobook generation complete!"))
+            self.root.after(0, lambda: self.status_label.config(text="Status: Ready (100% Offline Mode)"))
+            
         except Exception as e:
             error_text = str(e)
-            self.root.after(0, lambda msg=error_text: messagebox.showerror("Error", msg))
+            self.root.after(0, lambda msg=error_text: messagebox.showerror("Processing Error", msg))
+            self.root.after(0, lambda: self.status_label.config(text="Status: Error occurred"))
         finally:
             self.root.after(0, lambda: self.convert_btn.config(state="normal", text="Generate Audiobook"))
 

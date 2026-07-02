@@ -1,27 +1,26 @@
-# Local audio outputs and configurations
-*.wav
-*.ogg
-*.mp3
-
-# Project specific caches and audio snippets
-*_temp.wav
-*_ch*.ogg
-
-# Python environment and system caches
+# Python caches and virtual environments
 __pycache__/
 *.pyc
 .env
 .venv/
 env/
+venv/
 
-# Large model files (if you made a local copy)
+# Audio outputs and project-specific generated files
+*.wav
+*.ogg
+*.mp3
+*_temp.wav
+*_ch*.ogg
+
+# Local AI Models (These are too large for GitHub)
 local_model/
+models/
 
-# Operating system files
-.DS_Store
-Thumbs.db
-# ... your other ignored files ...
-
-# Private scripts and tokens
+# Private scripts containing authentication tokens
 test_token.py
 login_hf.py
+
+# Operating system artifacts
+.DS_Store
+Thumbs.db
